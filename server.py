@@ -8,7 +8,7 @@ app = Flask(__name__)
 # ================= ENV (Render Variables) =================
 
 BOT_TOKEN = os.environ.get("8685106379:AAGU7S34VYnVw9Z1pPMwoX6Xco7YiFSvRRI")
-CHANNEL_ID = os.environ.get("1003830259549")
+CHANNEL_ID = os.environ.get("-1003830259549")
 
 STRIPE_SECRET = os.environ.get("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")
 STRIPE_WEBHOOK_SECRET = os.environ.get("whsec_PMuwx30H9kdvfYaeEz258fFBzlt89GIT")
@@ -30,17 +30,21 @@ PRICE_MAP = {
 
 def send_message(chat_id, text, keyboard=None):
 
-    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+    try:
+        url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
 
-    payload = {
-        "chat_id": chat_id,
-        "text": text
-    }
+        payload = {
+            "chat_id": chat_id,
+            "text": text
+        }
 
-    if keyboard:
-        payload["reply_markup"] = keyboard
+        if keyboard:
+            payload["reply_markup"] = keyboard
 
-    requests.post(url, json=payload)
+        requests.post(url, json=payload)
+
+    except Exception as e:
+        print("SEND ERROR:", e)
 
 
 # ================= START =================
@@ -71,16 +75,13 @@ def handle_callback(callback):
         return
 
     try:
-
         session = stripe.checkout.Session.create(
             payment_method_types=["card"],
             mode="subscription",
-            line_items=[
-                {
-                    "price": PRICE_MAP[data],
-                    "quantity": 1
-                }
-            ],
+            line_items=[{
+                "price": PRICE_MAP[data],
+                "quantity": 1
+            }],
             success_url="https://t.me/",
             cancel_url="https://t.me/",
             metadata={
@@ -97,16 +98,11 @@ def handle_callback(callback):
             ]]
         }
 
-        send_message(
-            user_id,
-            "Нажмите кнопку для оплаты:",
-            keyboard
-        )
+        send_message(user_id, "Нажмите кнопку для оплаты:", keyboard)
 
     except Exception as e:
-
-        send_message(user_id, f"Stripe ошибка:\n{str(e)}")
         print("STRIPE ERROR:", e)
+        send_message(user_id, "Ошибка оплаты, попробуйте позже")
 
 
 # ================= STRIPE WEBHOOK =================
@@ -115,12 +111,12 @@ def handle_callback(callback):
 def stripe_webhook():
 
     payload = request.get_data()
-    sig_header = request.headers.get("Stripe-Signature")
+    sig = request.headers.get("Stripe-Signature")
 
     try:
         event = stripe.Webhook.construct_event(
             payload,
-            sig_header,
+            sig,
             STRIPE_WEBHOOK_SECRET
         )
     except Exception as e:
@@ -141,15 +137,15 @@ def stripe_webhook():
                 }
             ).json()
 
-            invite_link = invite["result"]["invite_link"]
+            link = invite["result"]["invite_link"]
 
             send_message(
                 telegram_id,
-                f"✅ Оплата прошла!\nВот ссылка:\n{invite_link}"
+                f"✅ Оплата прошла!\n\nВот доступ:\n{link}"
             )
 
         except Exception as e:
-            print(e)
+            print("INVITE ERROR:", e)
             send_message(telegram_id, "Ошибка выдачи доступа")
 
     return "ok", 200
