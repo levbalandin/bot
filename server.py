@@ -1,19 +1,18 @@
 from flask import Flask, request
 import requests
 import stripe
-import os
 
 app = Flask(__name__)
 
-# ================= ENV (Render Variables) =================
+# ================= CONFIG =================
 
-BOT_TOKEN = os.environ.get("8685106379:AAGU7S34VYnVw9Z1pPMwoX6Xco7YiFSvRRI")
-CHANNEL_ID = os.environ.get("-1003830259549")
+BOT_TOKEN = "8685106379:AAGU7S34VYnVw9Z1pPMwoX6Xco7YiFSrVRI"
+CHANNEL_ID = "-1003830259549"
 
-STRIPE_SECRET = os.environ.get("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")
-STRIPE_WEBHOOK_SECRET = os.environ.get("whsec_PMuwx30H9kdvfYaeEz258fFBzlt89GIT")
+STRIPE_SECRET = "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"
+STRIPE_WEBHOOK_SECRET = "whsec_PMuwx30H9kdvfYaeEz258fFBzlt89GIT"
 
-RENDER_URL = os.environ.get("RENDER_URL")
+RENDER_URL = "https://bot-lp4u.onrender.com"
 
 stripe.api_key = STRIPE_SECRET
 
@@ -29,7 +28,6 @@ PRICE_MAP = {
 # ================= TELEGRAM =================
 
 def send_message(chat_id, text, keyboard=None):
-
     try:
         url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
 
@@ -41,7 +39,7 @@ def send_message(chat_id, text, keyboard=None):
         if keyboard:
             payload["reply_markup"] = keyboard
 
-        requests.post(url, json=payload)
+        requests.post(url, json=payload, timeout=10)
 
     except Exception as e:
         print("SEND ERROR:", e)
@@ -50,7 +48,6 @@ def send_message(chat_id, text, keyboard=None):
 # ================= START =================
 
 def handle_start(chat_id):
-
     keyboard = {
         "inline_keyboard": [
             [{"text": "💳 1 месяц", "callback_data": "1m"}],
@@ -66,15 +63,14 @@ def handle_start(chat_id):
 # ================= CALLBACK =================
 
 def handle_callback(callback):
-
-    user_id = callback["from"]["id"]
-    data = callback["data"]
-
-    if data not in PRICE_MAP:
-        send_message(user_id, "Ошибка тарифа")
-        return
-
     try:
+        user_id = callback["from"]["id"]
+        data = callback["data"]
+
+        if data not in PRICE_MAP:
+            send_message(user_id, "Ошибка тарифа")
+            return
+
         session = stripe.checkout.Session.create(
             payment_method_types=["card"],
             mode="subscription",
@@ -102,14 +98,13 @@ def handle_callback(callback):
 
     except Exception as e:
         print("STRIPE ERROR:", e)
-        send_message(user_id, "Ошибка оплаты, попробуйте позже")
+        send_message(callback["from"]["id"], "Ошибка оплаты")
 
 
 # ================= STRIPE WEBHOOK =================
 
 @app.route("/stripe", methods=["POST"])
 def stripe_webhook():
-
     payload = request.get_data()
     sig = request.headers.get("Stripe-Signature")
 
@@ -124,9 +119,12 @@ def stripe_webhook():
         return "error", 400
 
     if event["type"] == "checkout.session.completed":
-
         session = event["data"]["object"]
-        telegram_id = session["metadata"]["telegram_id"]
+
+        telegram_id = session.get("metadata", {}).get("telegram_id")
+
+        if not telegram_id:
+            return "ok", 200
 
         try:
             invite = requests.post(
@@ -137,7 +135,7 @@ def stripe_webhook():
                 }
             ).json()
 
-            link = invite["result"]["invite_link"]
+            link = invite.get("result", {}).get("invite_link", "NO LINK")
 
             send_message(
                 telegram_id,
@@ -155,42 +153,55 @@ def stripe_webhook():
 
 @app.route("/telegram", methods=["POST"])
 def telegram_webhook():
+    try:
+        update = request.get_json()
 
-    update = request.get_json()
+        if not update:
+            return "ok", 200
 
-    if "message" in update:
-        chat_id = update["message"]["chat"]["id"]
-        text = update["message"].get("text")
+        if "message" in update:
+            chat_id = update["message"]["chat"]["id"]
+            text = update["message"].get("text", "")
 
-        if text == "/start":
-            handle_start(chat_id)
+            if text == "/start":
+                handle_start(chat_id)
 
-    if "callback_query" in update:
-        handle_callback(update["callback_query"])
+        elif "callback_query" in update:
+            handle_callback(update["callback_query"])
+
+    except Exception as e:
+        print("TELEGRAM ERROR:", e)
 
     return "ok", 200
 
 
-# ================= HOME =================
+# ================= HEALTH CHECK =================
 
 @app.route("/")
 def home():
     return "Bot running"
+
+@app.route("/health")
+def health():
+    return "OK"
 
 
 # ================= SET WEBHOOK =================
 
 @app.route("/setwebhook")
 def set_webhook():
+    try:
+        url = f"https://api.telegram.org/bot{BOT_TOKEN}/setWebhook"
+        webhook_url = f"{RENDER_URL}/telegram"
 
-    url = f"https://api.telegram.org/bot{BOT_TOKEN}/setWebhook"
+        r = requests.post(url, json={"url": webhook_url})
+        return r.text
 
-    webhook_url = f"{RENDER_URL}/telegram"
-
-    return requests.post(url, json={"url": webhook_url}).text
+    except Exception as e:
+        return str(e)
 
 
 # ================= MAIN =================
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
+    app.run(host="0.0.0.0", port=int(__import__("os").environ.get("PORT", 10000)))
