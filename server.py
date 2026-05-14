@@ -1,137 +1,165 @@
 from flask import Flask, request
+import requests
 import stripe
 import threading
 import time
 from datetime import datetime, timedelta
 
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
-
 app = Flask(__name__)
 
-# ---------------- TELEGRAM ----------------
-BOT_TOKEN = "8685106379:AAGU7S34VYnVw9Z1pPMwoX6Xco7YiFSvRRI"
+# ================= CONFIG =================
+BOT_TOKEN = "8685106379:AAET5pcVkmw9uuceDCMllFX_hwRgOguTsTI"
 CHANNEL_ID = -1003830259549
 
-# ---------------- STRIPE (LIVE MODE) ----------------
 STRIPE_SECRET = "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"
 STRIPE_WEBHOOK_SECRET = "whsec_PMuwx30H9kdvfYaeEz258fFBzlt89GIT"
 
 stripe.api_key = STRIPE_SECRET
 
-# ---------------- ТАРИФЫ ----------------
+# ================= PLANS =================
 PRICE_MAP = {
-    "1m": "price_1TX1WI5AySZk9F3jAfOTEg6B",
-    "3m": "price_1TX1X05AySZk9F3jwnCsSXrW",
-    "6m": "price_1TX1XJ5AySZk9F3j0kSslAcp",
-    "12m": "price_1TX1XY5AySZk9F3jsjrr9BS6"
+    "1m": ("price_1TX1WI5AySZk9F3jAfOTEg6B", 30),
+    "3m": ("price_1TX1X05AySZk9F3jwnCsSXrW", 90),
+    "6m": ("price_1TX1XJ5AySZk9F3j0kSslAcp", 180),
+    "12m": ("price_1TX1XY5AySZk9F3jsjrr9BS6", 365)
 }
 
-# ---------------- ДОБАВЛЕНО: ХРАНЕНИЕ ПОДПИСОК ----------------
+# ================= MEMORY =================
 user_subscriptions = {}
-bot_app = None
 
+# ================= TELEGRAM =================
+def send(chat_id, text, keyboard=None):
+    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
 
-# ---------------- START КНОПКИ ----------------
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    keyboard = [
-        [InlineKeyboardButton("💳 1 месяц — 20€", callback_data="1m")],
-        [InlineKeyboardButton("💳 3 месяца — 51€", callback_data="3m")],
-        [InlineKeyboardButton("💳 6 месяцев — 95€", callback_data="6m")],
-        [InlineKeyboardButton("💳 12 месяцев — 169€", callback_data="12m")]
-    ]
+    data = {
+        "chat_id": chat_id,
+        "text": text
+    }
 
-    await update.message.reply_text(
-        "Выбери тариф:",
-        reply_markup=InlineKeyboardMarkup(keyboard)
-    )
+    if keyboard:
+        data["reply_markup"] = keyboard
 
+    requests.post(url, json=data)
 
-# ---------------- CALLBACK ----------------
-async def choose_plan(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    try:
-        query = update.callback_query
-        await query.answer()
+# ================= START =================
+@app.route("/telegram", methods=["POST"])
+def telegram():
+    update = request.get_json()
 
-        plan = query.data
-        price_id = PRICE_MAP[plan]
+    if "message" in update:
+        chat_id = update["message"]["chat"]["id"]
+        text = update["message"].get("text", "")
 
-        user_id = query.from_user.id
-
-        session = stripe.checkout.Session.create(
-            mode="subscription",
-            payment_method_types=["card"],
-            line_items=[{
-                "price": price_id,
-                "quantity": 1
-            }],
-            success_url="https://t.me/",
-            metadata={
-                "telegram_id": str(user_id),
-                "price_id": price_id
+        if text == "/start":
+            keyboard = {
+                "inline_keyboard": [
+                    [{"text": "1 месяц", "callback_data": "1m"}],
+                    [{"text": "3 месяца", "callback_data": "3m"}],
+                    [{"text": "6 месяцев", "callback_data": "6m"}],
+                    [{"text": "12 месяцев", "callback_data": "12m"}]
+                ]
             }
-        )
+            send(chat_id, "Выбери тариф:", keyboard)
 
-        keyboard = [
-            [InlineKeyboardButton("💳 ОПЛАТИТЬ", url=session.url)]
-        ]
+    elif "callback_query" in update:
+        cb = update["callback_query"]
+        user_id = cb["from"]["id"]
+        data = cb["data"]
 
-        await query.message.reply_text(
-            "Нажми для оплаты:",
-            reply_markup=InlineKeyboardMarkup(keyboard)
-        )
+        if data not in PRICE_MAP:
+            send(user_id, "Ошибка тарифа")
+            return "ok"
 
-    except Exception as e:
-        print("BUTTON ERROR:", e)
+        price_id, days = PRICE_MAP[data]
 
+        try:
+            session = stripe.checkout.Session.create(
+                mode="subscription",
+                payment_method_types=["card"],
+                line_items=[{
+                    "price": price_id,
+                    "quantity": 1
+                }],
+                success_url="https://t.me/",
+                metadata={
+                    "telegram_id": str(user_id),
+                    "days": str(days)
+                }
+            )
 
-# ---------------- ДОБАВЛЕНО: ВЫДАЧА ДОСТУПА ----------------
-def send_access(telegram_id, days):
-    expire = datetime.now() + timedelta(days=days)
-    user_subscriptions[telegram_id] = expire
-    print(f"ACCESS SENT: {telegram_id} до {expire}")
+            keyboard = {
+                "inline_keyboard": [[
+                    {"text": "💳 ОПЛАТИТЬ", "url": session.url}
+                ]]
+            }
 
+            send(user_id, "Оплати по кнопке:", keyboard)
 
-# ---------------- WEBHOOK STRIPE ----------------
+        except Exception as e:
+            print("STRIPE ERROR:", e)
+
+    return "ok"
+
+# ================= STRIPE =================
 @app.route("/stripe", methods=["POST"])
 def stripe_webhook():
     payload = request.data
-    sig_header = request.headers.get("Stripe-Signature")
+    sig = request.headers.get("Stripe-Signature")
 
     try:
         event = stripe.Webhook.construct_event(
             payload,
-            sig_header,
+            sig,
             STRIPE_WEBHOOK_SECRET
         )
     except Exception as e:
-        print("Webhook error:", e)
+        print("WEBHOOK ERROR:", e)
         return "error", 400
 
     if event["type"] == "checkout.session.completed":
         session = event["data"]["object"]
 
-        metadata = session.get("metadata", {})
-        telegram_id = metadata.get("telegram_id")
-        price_id = metadata.get("price_id")
+        telegram_id = session["metadata"]["telegram_id"]
+        days = int(session["metadata"]["days"])
 
-        if telegram_id and price_id:
-            if price_id == PRICE_MAP["1m"]:
-                days = 30
-            elif price_id == PRICE_MAP["3m"]:
-                days = 90
-            elif price_id == PRICE_MAP["6m"]:
-                days = 180
-            elif price_id == PRICE_MAP["12m"]:
-                days = 365
-            else:
-                days = 0
+        expire = datetime.now() + timedelta(days=days)
+        user_subscriptions[int(telegram_id)] = expire
 
-            if days:
-                send_access(int(telegram_id), days)
+        print(f"ACCESS GRANTED {telegram_id} until {expire}")
 
-    return "ok", 200
+    return "ok"
 
+# ================= AUTO REMOVE =================
+def checker():
+    while True:
+        now = datetime.now()
 
-# ---------------- ДОБАВЛЕНО: АВТО-ВЫКИДЫВАНИЕ ----------------
-def
+        for user_id, expire in list(user_subscriptions.items()):
+            if now > expire:
+                try:
+                    requests.post(
+                        f"https://api.telegram.org/bot{BOT_TOKEN}/banChatMember",
+                        json={
+                            "chat_id": CHANNEL_ID,
+                            "user_id": user_id
+                        }
+                    )
+
+                    del user_subscriptions[user_id]
+                    print("REMOVED:", user_id)
+
+                except Exception as e:
+                    print("REMOVE ERROR:", e)
+
+        time.sleep(60)
+
+# ================= HOME =================
+@app.route("/")
+def home():
+    return "OK"
+
+# ================= START THREAD =================
+if __name__ == "__main__":
+    threading.Thread(target=checker, daemon=True).start()
+
+    app.run(host="0.0.0.0", port=10000)
