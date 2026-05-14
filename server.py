@@ -131,9 +131,21 @@ def stripe_webhook():
 # ---------------- TELEGRAM WEBHOOK ----------------
 @app.route("/telegram", methods=["POST"])
 def telegram_webhook():
-    update = Update.de_json(request.get_json(force=True), bot_app.bot)
-    bot_app.process_update(update)
-    return "ok"
+    try:
+        data = request.get_json(force=True)
+
+        update = Update.de_json(data, bot_app.bot)
+
+        import asyncio
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        loop.run_until_complete(bot_app.process_update(update))
+
+        return "ok"
+
+    except Exception as e:
+        print("TELEGRAM ERROR:", e)
+        return "error", 200
 
 
 # ---------------- CHECK EXPIRED ----------------
