@@ -194,6 +194,9 @@ def set_webhook():
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/setWebhook"
     webhook_url = f"{RENDER_URL}/telegram"
 
+    # сначала чистим старый webhook
+    requests.post(f"https://api.telegram.org/bot{BOT_TOKEN}/deleteWebhook")
+
     r = requests.post(
         url,
         data={
