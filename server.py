@@ -191,15 +191,15 @@ def health():
 
 @app.route("/setwebhook")
 def set_webhook():
-    try:
-        url = f"https://api.telegram.org/bot{BOT_TOKEN}/setWebhook"
-        webhook_url = f"{RENDER_URL}/telegram"
+    url = f"https://api.telegram.org/bot{BOT_TOKEN}/setWebhook"
+    webhook_url = f"{RENDER_URL}/telegram"
 
-        r = requests.post(url, json={"url": webhook_url})
-        return r.text
+    r = requests.post(
+        url,
+        data={"url": webhook_url}  # <-- ВОТ ТУТ ВАЖНО
+    )
 
-    except Exception as e:
-        return str(e)
+    return r.text
 
 
 # ================= MAIN =================
