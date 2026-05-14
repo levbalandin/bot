@@ -184,7 +184,7 @@ def home():
 
 @app.route("/health")
 def health():
-    return "OK"
+    return "OK_NEW"
 
 
 # ================= SET WEBHOOK =================
