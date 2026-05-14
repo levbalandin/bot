@@ -8,11 +8,11 @@ app = Flask(__name__)
 
 # ================= ENV =================
 
-BOT_TOKEN = os.environ.get("BOT_TOKEN")
-CHANNEL_ID = os.environ.get("CHANNEL_ID")
+BOT_TOKEN = os.environ.get("8685106379:AAGU7S34VYnVw9Z1pPMwoX6Xco7YiFSvRRI")
+CHANNEL_ID = os.environ.get("-1003830259549")
 
-STRIPE_SECRET = os.environ.get("STRIPE_SECRET")
-STRIPE_WEBHOOK_SECRET = os.environ.get("STRIPE_WEBHOOK_SECRET")
+STRIPE_SECRET = os.environ.get("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")
+STRIPE_WEBHOOK_SECRET = os.environ.get("whsec_PMuwx30H9kdvfYaeEz258fFBzlt89GIT")
 
 RENDER_URL = os.environ.get("RENDER_URL")
 
