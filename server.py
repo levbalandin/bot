@@ -1,17 +1,13 @@
-print("🔥 LOADED NEW CODE")
 from flask import Flask, request
 import requests
 import stripe
+import os
 
 app = Flask(__name__)
 
 # ================= CONFIG =================
-
-BOT_TOKEN = "8685106379:AAGU7S34VYnVw9Z1pPMwoX6Xco7YiFSrVRI"
+BOT_TOKEN = "8685106379:AAGU7S34VYnVw9Z1pPMwoX6Xco7YiFSvRRI"
 CHANNEL_ID = "-1003830259549"
-
-print("BOT TOKEN:", BOT_TOKEN)
-print("TOKEN CHECK:", BOT_TOKEN[:20])
 
 STRIPE_SECRET = "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"
 STRIPE_WEBHOOK_SECRET = "whsec_PMuwx30H9kdvfYaeEz258fFBzlt89GIT"
@@ -20,8 +16,8 @@ RENDER_URL = "https://bot-lp4u.onrender.com"
 
 stripe.api_key = STRIPE_SECRET
 
-# ================= PRICE IDS =================
 
+# ================= PRICE IDS =================
 PRICE_MAP = {
     "1m": "price_1TX1WI5AySZk9F3jAfOTEg6B",
     "3m": "price_1TX1X05AySZk9F3jwnCsSXrW",
@@ -29,28 +25,24 @@ PRICE_MAP = {
     "12m": "price_1TX1XY5AySZk9F3jsjrr9BS6"
 }
 
+
 # ================= TELEGRAM =================
-
 def send_message(chat_id, text, keyboard=None):
-    try:
-        url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
 
-        payload = {
-            "chat_id": chat_id,
-            "text": text
-        }
+    payload = {
+        "chat_id": chat_id,
+        "text": text
+    }
 
-        if keyboard:
-            payload["reply_markup"] = keyboard
+    if keyboard:
+        payload["reply_markup"] = keyboard
 
-        requests.post(url, json=payload, timeout=10)
-
-    except Exception as e:
-        print("SEND ERROR:", e)
+    r = requests.post(url, json=payload)
+    print("TG RESPONSE:", r.text)   # <-- важно для дебага
 
 
 # ================= START =================
-
 def handle_start(chat_id):
     keyboard = {
         "inline_keyboard": [
@@ -65,16 +57,15 @@ def handle_start(chat_id):
 
 
 # ================= CALLBACK =================
-
 def handle_callback(callback):
+    user_id = callback["from"]["id"]
+    data = callback["data"]
+
+    if data not in PRICE_MAP:
+        send_message(user_id, "Ошибка тарифа")
+        return
+
     try:
-        user_id = callback["from"]["id"]
-        data = callback["data"]
-
-        if data not in PRICE_MAP:
-            send_message(user_id, "Ошибка тарифа")
-            return
-
         session = stripe.checkout.Session.create(
             payment_method_types=["card"],
             mode="subscription",
@@ -91,10 +82,7 @@ def handle_callback(callback):
 
         keyboard = {
             "inline_keyboard": [[
-                {
-                    "text": "💳 ОПЛАТИТЬ",
-                    "url": session.url
-                }
+                {"text": "💳 ОПЛАТИТЬ", "url": session.url}
             ]]
         }
 
@@ -102,112 +90,52 @@ def handle_callback(callback):
 
     except Exception as e:
         print("STRIPE ERROR:", e)
-        send_message(callback["from"]["id"], "Ошибка оплаты")
+        send_message(user_id, "Stripe ошибка")
 
 
-# ================= STRIPE WEBHOOK =================
-
-@app.route("/stripe", methods=["POST"])
-def stripe_webhook():
-    payload = request.get_data()
-    sig = request.headers.get("Stripe-Signature")
-
-    try:
-        event = stripe.Webhook.construct_event(
-            payload,
-            sig,
-            STRIPE_WEBHOOK_SECRET
-        )
-    except Exception as e:
-        print("WEBHOOK ERROR:", e)
-        return "error", 400
-
-    if event["type"] == "checkout.session.completed":
-        session = event["data"]["object"]
-
-        telegram_id = session.get("metadata", {}).get("telegram_id")
-
-        if not telegram_id:
-            return "ok", 200
-
-        try:
-            invite = requests.post(
-                f"https://api.telegram.org/bot{BOT_TOKEN}/createChatInviteLink",
-                json={
-                    "chat_id": CHANNEL_ID,
-                    "member_limit": 1
-                }
-            ).json()
-
-            link = invite.get("result", {}).get("invite_link", "NO LINK")
-
-            send_message(
-                telegram_id,
-                f"✅ Оплата прошла!\n\nВот доступ:\n{link}"
-            )
-
-        except Exception as e:
-            print("INVITE ERROR:", e)
-            send_message(telegram_id, "Ошибка выдачи доступа")
-
-    return "ok", 200
-
-
-# ================= TELEGRAM WEBHOOK =================
-
+# ================= WEBHOOK =================
 @app.route("/telegram", methods=["POST"])
 def telegram_webhook():
-    try:
-        update = request.get_json()
+    update = request.get_json()
 
-        if not update:
-            return "ok", 200
+    if not update:
+        return "ok"
 
-        if "message" in update:
-            chat_id = update["message"]["chat"]["id"]
-            text = update["message"].get("text", "")
+    if "message" in update:
+        chat_id = update["message"]["chat"]["id"]
+        text = update["message"].get("text", "")
 
-            if text == "/start":
-                handle_start(chat_id)
+        if text == "/start":
+            handle_start(chat_id)
 
-        elif "callback_query" in update:
-            handle_callback(update["callback_query"])
+    elif "callback_query" in update:
+        handle_callback(update["callback_query"])
 
-    except Exception as e:
-        print("TELEGRAM ERROR:", e)
+    return "ok"
 
-    return "ok", 200
-
-
-# ================= HEALTH CHECK =================
 
 @app.route("/")
 def home():
-    return "Bot running"
-
-@app.route("/health")
-def health():
-    return "OK_NEW"
+    return "OK"
 
 
-# ================= SET WEBHOOK =================
-
+# ================= SET WEBHOOK DEBUG =================
 @app.route("/setwebhook")
 def set_webhook():
-    url = f"https://api.telegram.org/bot{BOT_TOKEN}/getMe"
-    r = requests.get(url)
+    # проверка токена (ВАЖНО)
+    r = requests.get(f"https://api.telegram.org/bot{BOT_TOKEN}/getMe")
+    print("GETME:", r.text)
 
-    print("TELEGRAM TEST:", r.text)
+    # установка webhook
+    url = f"https://api.telegram.org/bot{BOT_TOKEN}/setWebhook"
+    r2 = requests.post(url, data={"url": f"{RENDER_URL}/telegram"})
 
-    return r.text
+    return {
+        "getme": r.text,
+        "webhook": r2.text
+    }
+
 
 # ================= MAIN =================
 if __name__ == "__main__":
-    import os
-    print("🚀 STARTING FLASK APP")
-
-    app.run(
-        host="0.0.0.0",
-        port=int(os.environ.get("PORT", 10000)),
-        debug=False
-    )
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
