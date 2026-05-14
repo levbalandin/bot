@@ -1,26 +1,20 @@
 from flask import Flask, request
+import requests
 import stripe
 import os
-import threading
-import time
 from datetime import datetime, timedelta
-
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Application, CommandHandler, CallbackQueryHandler
 
 app = Flask(__name__)
 
-# ---------------- TELEGRAM ----------------
-BOT_TOKEN = "YOUR_BOT_TOKEN"
-CHANNEL_ID = -1003830259549
+# ---------------- CONFIG ----------------
+BOT_TOKEN = "8685106379:AAGU7S34VYnVw9Z1pPMwoX6Xco7YiFSvRRI"
+CHANNEL_ID = "-1003830259549"
 
-# ---------------- STRIPE ----------------
-STRIPE_SECRET = "YOUR_STRIPE_SECRET"
-STRIPE_WEBHOOK_SECRET = "YOUR_STRIPE_WEBHOOK_SECRET"
+STRIPE_SECRET = "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"
+STRIPE_WEBHOOK_SECRET = "whsec_PMuwx30H9kdvfYaeEz258fFBzlt89GIT"
 
 stripe.api_key = STRIPE_SECRET
 
-# ---------------- ТАРИФЫ ----------------
 PRICE_MAP = {
     "1m": "price_xxx1",
     "3m": "price_xxx2",
@@ -28,43 +22,45 @@ PRICE_MAP = {
     "12m": "price_xxx4"
 }
 
-# ---------------- ДАННЫЕ ----------------
 user_subscriptions = {}
 
-# ---------------- TELEGRAM APP ----------------
-bot_app = Application.builder().token(BOT_TOKEN).build()
+# ---------------- TELEGRAM SEND ----------------
+def send_message(chat_id, text, keyboard=None):
+    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+
+    payload = {
+        "chat_id": chat_id,
+        "text": text,
+        "reply_markup": keyboard
+    }
+
+    requests.post(url, json=payload)
 
 
-# ---------------- START ----------------
-async def start(update: Update, context):
-    keyboard = [
-        [InlineKeyboardButton("💳 1 месяц", callback_data="1m")],
-        [InlineKeyboardButton("💳 3 месяца", callback_data="3m")],
-        [InlineKeyboardButton("💳 6 месяцев", callback_data="6m")],
-        [InlineKeyboardButton("💳 12 месяцев", callback_data="12m")]
-    ]
+# ---------------- /START ----------------
+def handle_start(chat_id):
+    keyboard = {
+        "inline_keyboard": [
+            [{"text": "💳 1 месяц", "callback_data": "1m"}],
+            [{"text": "💳 3 месяца", "callback_data": "3m"}],
+            [{"text": "💳 6 месяцев", "callback_data": "6m"}],
+            [{"text": "💳 12 месяцев", "callback_data": "12m"}]
+        ]
+    }
 
-    await update.message.reply_text(
-        "Выбери тариф:",
-        reply_markup=InlineKeyboardMarkup(keyboard)
-    )
+    send_message(chat_id, "Выбери тариф:", keyboard)
 
 
 # ---------------- CALLBACK ----------------
-async def choose_plan(update: Update, context):
-    query = update.callback_query
-    await query.answer()
+def handle_callback(callback):
+    data = callback["data"]
+    user_id = callback["from"]["id"]
 
-    plan = query.data
-    price_id = PRICE_MAP[plan]
-    user_id = query.from_user.id
+    price_id = PRICE_MAP[data]
 
     session = stripe.checkout.Session.create(
         mode="subscription",
-        line_items=[{
-            "price": price_id,
-            "quantity": 1
-        }],
+        line_items=[{"price": price_id, "quantity": 1}],
         success_url="https://t.me/",
         metadata={
             "telegram_id": str(user_id),
@@ -72,31 +68,29 @@ async def choose_plan(update: Update, context):
         }
     )
 
-    await query.message.reply_text(
-        "Оплати:",
-        reply_markup=InlineKeyboardMarkup([
-            [InlineKeyboardButton("💳 ОПЛАТИТЬ", url=session.url)]
-        ])
+    url = session.url
+
+    send_message(
+        user_id,
+        "Оплати по ссылке:",
+        {
+            "inline_keyboard": [[
+                {"text": "💳 ОПЛАТИТЬ", "url": url}
+            ]]
+        }
     )
 
 
-# ---------------- ACCESS ----------------
-def send_access(user_id, days):
-    expire = datetime.now() + timedelta(days=days)
-    user_subscriptions[user_id] = expire
-    print("ACCESS:", user_id, expire)
-
-
-# ---------------- STRIPE WEBHOOK ----------------
+# ---------------- STRIPE ----------------
 @app.route("/stripe", methods=["POST"])
 def stripe_webhook():
     payload = request.data
-    sig_header = request.headers.get("Stripe-Signature")
+    sig = request.headers.get("Stripe-Signature")
 
     try:
         event = stripe.Webhook.construct_event(
             payload,
-            sig_header,
+            sig,
             STRIPE_WEBHOOK_SECRET
         )
     except Exception as e:
@@ -106,24 +100,21 @@ def stripe_webhook():
     if event["type"] == "checkout.session.completed":
         session = event["data"]["object"]
 
-        metadata = session.get("metadata", {})
-        user_id = metadata.get("telegram_id")
-        price_id = metadata.get("price_id")
+        meta = session.get("metadata", {})
+        user_id = meta.get("telegram_id")
+        price_id = meta.get("price_id")
 
         if user_id and price_id:
-            if price_id == PRICE_MAP["1m"]:
-                days = 30
-            elif price_id == PRICE_MAP["3m"]:
-                days = 90
-            elif price_id == PRICE_MAP["6m"]:
-                days = 180
-            elif price_id == PRICE_MAP["12m"]:
-                days = 365
-            else:
-                days = 0
+            days = {
+                PRICE_MAP["1m"]: 30,
+                PRICE_MAP["3m"]: 90,
+                PRICE_MAP["6m"]: 180,
+                PRICE_MAP["12m"]: 365
+            }.get(price_id, 0)
 
             if days:
-                send_access(int(user_id), days)
+                user_subscriptions[int(user_id)] = datetime.now() + timedelta(days=days)
+                print("ACCESS:", user_id, days)
 
     return "ok", 200
 
@@ -131,45 +122,44 @@ def stripe_webhook():
 # ---------------- TELEGRAM WEBHOOK ----------------
 @app.route("/telegram", methods=["POST"])
 def telegram_webhook():
-    try:
-        data = request.get_json(force=True)
+    update = request.get_json()
 
-        update = Update.de_json(data, bot_app.bot)
+    if "message" in update:
+        chat_id = update["message"]["chat"]["id"]
+        text = update["message"].get("text", "")
 
-        import asyncio
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        loop.run_until_complete(bot_app.process_update(update))
+        if text == "/start":
+            handle_start(chat_id)
 
-        return "ok"
+    if "callback_query" in update:
+        handle_callback(update["callback_query"])
 
-    except Exception as e:
-        print("TELEGRAM ERROR:", e)
-        return "error", 200
+    return "ok", 200
 
 
-# ---------------- CHECK EXPIRED ----------------
+# ---------------- CHECK ACCESS ----------------
 def check_expired():
+    import time
+
     while True:
         now = datetime.now()
 
         for user_id, expire in list(user_subscriptions.items()):
             if now > expire:
                 try:
-                    bot_app.bot.ban_chat_member(CHANNEL_ID, user_id)
-                    bot_app.bot.unban_chat_member(CHANNEL_ID, user_id)
+                    url = f"https://api.telegram.org/bot{BOT_TOKEN}/banChatMember"
+                    requests.post(url, json={
+                        "chat_id": CHANNEL_ID,
+                        "user_id": user_id
+                    })
+
                     del user_subscriptions[user_id]
                     print("REMOVED:", user_id)
+
                 except Exception as e:
                     print("ERROR:", e)
 
         time.sleep(60)
-
-
-# ---------------- SETUP BOT ----------------
-def setup_bot():
-    bot_app.add_handler(CommandHandler("start", start))
-    bot_app.add_handler(CallbackQueryHandler(choose_plan))
 
 
 # ---------------- HOME ----------------
@@ -180,7 +170,7 @@ def home():
 
 # ---------------- START ----------------
 if __name__ == "__main__":
-    setup_bot()
+    import threading
 
     threading.Thread(target=check_expired, daemon=True).start()
 
