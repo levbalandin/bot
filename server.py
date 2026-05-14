@@ -194,19 +194,10 @@ def health():
 
 @app.route("/setwebhook")
 def set_webhook():
-    url = f"https://api.telegram.org/bot{BOT_TOKEN}/setWebhook"
-    webhook_url = f"{RENDER_URL}/telegram"
+    url = f"https://api.telegram.org/bot{BOT_TOKEN}/getMe"
+    r = requests.get(url)
 
-    # сначала чистим старый webhook
-    requests.post(f"https://api.telegram.org/bot{BOT_TOKEN}/deleteWebhook")
-
-    r = requests.post(
-        url,
-        data={
-            "url": webhook_url,
-            "drop_pending_updates": True
-        }
-    )
+    print("TELEGRAM TEST:", r.text)
 
     return r.text
 
