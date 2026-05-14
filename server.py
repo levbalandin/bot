@@ -196,11 +196,13 @@ def set_webhook():
 
     r = requests.post(
         url,
-        data={"url": webhook_url}  # <-- ВОТ ТУТ ВАЖНО
+        data={
+            "url": webhook_url,
+            "drop_pending_updates": True
+        }
     )
 
     return r.text
-
 
 # ================= MAIN =================
 if __name__ == "__main__":
