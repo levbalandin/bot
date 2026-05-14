@@ -1,4 +1,3 @@
-```python
 from flask import Flask, request
 import requests
 import stripe
@@ -6,10 +5,10 @@ import os
 
 app = Flask(__name__)
 
-# ================= ENV =================
+# ================= ENV (Render Variables) =================
 
 BOT_TOKEN = os.environ.get("8685106379:AAGU7S34VYnVw9Z1pPMwoX6Xco7YiFSvRRI")
-CHANNEL_ID = os.environ.get("-1003830259549")
+CHANNEL_ID = os.environ.get("1003830259549")
 
 STRIPE_SECRET = os.environ.get("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")
 STRIPE_WEBHOOK_SECRET = os.environ.get("whsec_PMuwx30H9kdvfYaeEz258fFBzlt89GIT")
@@ -33,15 +32,15 @@ def send_message(chat_id, text, keyboard=None):
 
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
 
-    data = {
+    payload = {
         "chat_id": chat_id,
         "text": text
     }
 
     if keyboard:
-        data["reply_markup"] = keyboard
+        payload["reply_markup"] = keyboard
 
-    requests.post(url, json=data)
+    requests.post(url, json=payload)
 
 
 # ================= START =================
@@ -50,18 +49,14 @@ def handle_start(chat_id):
 
     keyboard = {
         "inline_keyboard": [
-            [{"text": "1 месяц", "callback_data": "1m"}],
-            [{"text": "3 месяца", "callback_data": "3m"}],
-            [{"text": "6 месяцев", "callback_data": "6m"}],
-            [{"text": "12 месяцев", "callback_data": "12m"}]
+            [{"text": "💳 1 месяц", "callback_data": "1m"}],
+            [{"text": "💳 3 месяца", "callback_data": "3m"}],
+            [{"text": "💳 6 месяцев", "callback_data": "6m"}],
+            [{"text": "💳 12 месяцев", "callback_data": "12m"}]
         ]
     }
 
-    send_message(
-        chat_id,
-        "Выберите подписку:",
-        keyboard
-    )
+    send_message(chat_id, "Выберите тариф:", keyboard)
 
 
 # ================= CALLBACK =================
@@ -78,21 +73,16 @@ def handle_callback(callback):
     try:
 
         session = stripe.checkout.Session.create(
-
             payment_method_types=["card"],
-
             mode="subscription",
-
             line_items=[
                 {
                     "price": PRICE_MAP[data],
                     "quantity": 1
                 }
             ],
-
             success_url="https://t.me/",
             cancel_url="https://t.me/",
-
             metadata={
                 "telegram_id": str(user_id)
             }
@@ -101,7 +91,7 @@ def handle_callback(callback):
         keyboard = {
             "inline_keyboard": [[
                 {
-                    "text": "Оплатить",
+                    "text": "💳 ОПЛАТИТЬ",
                     "url": session.url
                 }
             ]]
@@ -109,16 +99,14 @@ def handle_callback(callback):
 
         send_message(
             user_id,
-            "Нажмите кнопку ниже для оплаты:",
+            "Нажмите кнопку для оплаты:",
             keyboard
         )
 
     except Exception as e:
 
-        send_message(
-            user_id,
-            f"Stripe ошибка:\n{str(e)}"
-        )
+        send_message(user_id, f"Stripe ошибка:\n{str(e)}")
+        print("STRIPE ERROR:", e)
 
 
 # ================= STRIPE WEBHOOK =================
@@ -130,26 +118,21 @@ def stripe_webhook():
     sig_header = request.headers.get("Stripe-Signature")
 
     try:
-
         event = stripe.Webhook.construct_event(
             payload,
             sig_header,
             STRIPE_WEBHOOK_SECRET
         )
-
     except Exception as e:
-
         print("WEBHOOK ERROR:", e)
         return "error", 400
 
     if event["type"] == "checkout.session.completed":
 
         session = event["data"]["object"]
-
         telegram_id = session["metadata"]["telegram_id"]
 
         try:
-
             invite = requests.post(
                 f"https://api.telegram.org/bot{BOT_TOKEN}/createChatInviteLink",
                 json={
@@ -162,17 +145,12 @@ def stripe_webhook():
 
             send_message(
                 telegram_id,
-                f"✅ Оплата прошла успешно!\n\nВот ваша ссылка:\n{invite_link}"
+                f"✅ Оплата прошла!\nВот ссылка:\n{invite_link}"
             )
 
         except Exception as e:
-
-            send_message(
-                telegram_id,
-                "Ошибка выдачи доступа"
-            )
-
             print(e)
+            send_message(telegram_id, "Ошибка выдачи доступа")
 
     return "ok", 200
 
@@ -185,16 +163,13 @@ def telegram_webhook():
     update = request.get_json()
 
     if "message" in update:
-
         chat_id = update["message"]["chat"]["id"]
-
         text = update["message"].get("text")
 
         if text == "/start":
             handle_start(chat_id)
 
     if "callback_query" in update:
-
         handle_callback(update["callback_query"])
 
     return "ok", 200
@@ -216,24 +191,10 @@ def set_webhook():
 
     webhook_url = f"{RENDER_URL}/telegram"
 
-    response = requests.post(
-        url,
-        json={
-            "url": webhook_url
-        }
-    )
-
-    return response.text
+    return requests.post(url, json={"url": webhook_url}).text
 
 
 # ================= MAIN =================
 
 if __name__ == "__main__":
-
-    app.run(
-        host="0.0.0.0",
-        port=int(os.environ.get("PORT", 10000))
-    )
-```
-
-
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
