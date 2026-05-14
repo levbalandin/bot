@@ -1,3 +1,4 @@
+```python
 from flask import Flask, request
 import requests
 import stripe
@@ -15,11 +16,12 @@ STRIPE_WEBHOOK_SECRET = "whsec_PMuwx30H9kdvfYaeEz258fFBzlt89GIT"
 
 stripe.api_key = STRIPE_SECRET
 
+# ---------------- PRICE IDS ----------------
 PRICE_MAP = {
-    "1m": "price_xxx1",
-    "3m": "price_xxx2",
-    "6m": "price_xxx3",
-    "12m": "price_xxx4"
+    "1m": "price_1TX1WI5AySZk9F3jAfOTEg6B",
+    "3m": "price_1TX1X05AySZk9F3jwnCsSXrW",
+    "6m": "price_1TX1XJ5AySZk9F3j0kSslAcp",
+    "12m": "price_1TX1XY5AySZk9F3jsjrr9BS6"
 }
 
 user_subscriptions = {}
@@ -30,11 +32,15 @@ def send_message(chat_id, text, keyboard=None):
 
     payload = {
         "chat_id": chat_id,
-        "text": text,
-        "reply_markup": keyboard
+        "text": text
     }
 
-    requests.post(url, json=payload)
+    if keyboard:
+        payload["reply_markup"] = keyboard
+
+    response = requests.post(url, json=payload)
+
+    print("TELEGRAM RESPONSE:", response.text)
 
 
 # ---------------- /START ----------------
@@ -53,35 +59,72 @@ def handle_start(chat_id):
 
 # ---------------- CALLBACK ----------------
 def handle_callback(callback):
-    data = callback["data"]
-    user_id = callback["from"]["id"]
+    try:
+        data = callback["data"]
+        user_id = callback["from"]["id"]
 
-    price_id = PRICE_MAP[data]
+        print("CALLBACK:", data)
 
-    session = stripe.checkout.Session.create(
-        mode="subscription",
-        line_items=[{"price": price_id, "quantity": 1}],
-        success_url="https://t.me/",
-        metadata={
-            "telegram_id": str(user_id),
-            "price_id": price_id
-        }
-    )
+        if data not in PRICE_MAP:
+            send_message(user_id, "Ошибка: тариф не найден")
+            return
 
-    url = session.url
+        price_id = PRICE_MAP[data]
 
-    send_message(
-        user_id,
-        "Оплати по ссылке:",
-        {
+        print("PRICE ID:", price_id)
+
+        session = stripe.checkout.Session.create(
+            payment_method_types=["card"],
+            mode="subscription",
+
+            line_items=[
+                {
+                    "price": price_id,
+                    "quantity": 1
+                }
+            ],
+
+            success_url="https://t.me/",
+            cancel_url="https://t.me/",
+
+            metadata={
+                "telegram_id": str(user_id),
+                "price_id": price_id
+            }
+        )
+
+        print("SESSION CREATED")
+        print("SESSION URL:", session.url)
+
+        if not session.url:
+            send_message(user_id, "Stripe не вернул ссылку")
+            return
+
+        keyboard = {
             "inline_keyboard": [[
-                {"text": "💳 ОПЛАТИТЬ", "url": url}
+                {
+                    "text": "💳 ОПЛАТИТЬ",
+                    "url": session.url
+                }
             ]]
         }
-    )
+
+        send_message(
+            user_id,
+            "Оплати по ссылке:",
+            keyboard
+        )
+
+    except Exception as e:
+        print("STRIPE ERROR:", str(e))
+
+        send_message(
+            user_id,
+            f"Ошибка Stripe:\n{str(e)}"
+        )
 
 
-# ---------------- STRIPE ----------------
+# ---------------- STRIPE WEBHOOK ----------------
 @app.route("/stripe", methods=["POST"])
 def stripe_webhook():
     payload = request.data
@@ -93,18 +136,24 @@ def stripe_webhook():
             sig,
             STRIPE_WEBHOOK_SECRET
         )
+
     except Exception as e:
-        print("Stripe error:", e)
+        print("STRIPE WEBHOOK ERROR:", e)
         return "error", 400
 
     if event["type"] == "checkout.session.completed":
+
         session = event["data"]["object"]
 
         meta = session.get("metadata", {})
+
         user_id = meta.get("telegram_id")
         price_id = meta.get("price_id")
 
+        print("PAYMENT SUCCESS:", user_id, price_id)
+
         if user_id and price_id:
+
             days = {
                 PRICE_MAP["1m"]: 30,
                 PRICE_MAP["3m"]: 90,
@@ -113,8 +162,17 @@ def stripe_webhook():
             }.get(price_id, 0)
 
             if days:
-                user_subscriptions[int(user_id)] = datetime.now() + timedelta(days=days)
-                print("ACCESS:", user_id, days)
+
+                user_subscriptions[int(user_id)] = (
+                    datetime.now() + timedelta(days=days)
+                )
+
+                print("ACCESS GRANTED:", user_id)
+
+                send_message(
+                    int(user_id),
+                    f"✅ Оплата прошла.\nПодписка активна на {days} дней."
+                )
 
     return "ok", 200
 
@@ -122,42 +180,59 @@ def stripe_webhook():
 # ---------------- TELEGRAM WEBHOOK ----------------
 @app.route("/telegram", methods=["POST"])
 def telegram_webhook():
-    update = request.get_json()
 
-    if "message" in update:
-        chat_id = update["message"]["chat"]["id"]
-        text = update["message"].get("text", "")
+    try:
+        update = request.get_json()
 
-        if text == "/start":
-            handle_start(chat_id)
+        print("UPDATE:", update)
 
-    if "callback_query" in update:
-        handle_callback(update["callback_query"])
+        if "message" in update:
 
-    return "ok", 200
+            chat_id = update["message"]["chat"]["id"]
+
+            text = update["message"].get("text", "")
+
+            if text == "/start":
+                handle_start(chat_id)
+
+        if "callback_query" in update:
+
+            handle_callback(update["callback_query"])
+
+        return "ok", 200
+
+    except Exception as e:
+        print("TELEGRAM ERROR:", e)
+        return "error", 200
 
 
 # ---------------- CHECK ACCESS ----------------
 def check_expired():
+
     import time
 
     while True:
+
         now = datetime.now()
 
         for user_id, expire in list(user_subscriptions.items()):
+
             if now > expire:
+
                 try:
                     url = f"https://api.telegram.org/bot{BOT_TOKEN}/banChatMember"
+
                     requests.post(url, json={
                         "chat_id": CHANNEL_ID,
                         "user_id": user_id
                     })
 
                     del user_subscriptions[user_id]
+
                     print("REMOVED:", user_id)
 
                 except Exception as e:
-                    print("ERROR:", e)
+                    print("REMOVE ERROR:", e)
 
         time.sleep(60)
 
@@ -170,8 +245,17 @@ def home():
 
 # ---------------- START ----------------
 if __name__ == "__main__":
+
     import threading
 
-    threading.Thread(target=check_expired, daemon=True).start()
+    threading.Thread(
+        target=check_expired,
+        daemon=True
+    ).start()
 
-    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
+    app.run(
+        host="0.0.0.0",
+        port=int(os.environ.get("PORT", 10000))
+    )
+```
+
