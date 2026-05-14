@@ -203,6 +203,12 @@ def set_webhook():
 
 
 # ================= MAIN =================
-
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=int(__import__("os").environ.get("PORT", 10000)))
+    import os
+    print("🚀 STARTING FLASK APP")
+
+    app.run(
+        host="0.0.0.0",
+        port=int(os.environ.get("PORT", 10000)),
+        debug=False
+    )
