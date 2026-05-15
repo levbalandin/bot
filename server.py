@@ -154,6 +154,7 @@ def stripe_webhook():
 
         expire = datetime.utcnow() + timedelta(days=days)
 
+        # сохраняем подписку в базу
         conn = sqlite3.connect("subs.db")
         c = conn.cursor()
         c.execute("""
@@ -164,6 +165,31 @@ def stripe_webhook():
         conn.close()
 
         print("ACCESS GRANTED:", telegram_id)
+
+        # ================= ВАЖНО: ОДНОРАЗОВАЯ ССЫЛКА =================
+        try:
+            invite = requests.post(
+                f"https://api.telegram.org/bot{BOT_TOKEN}/createChatInviteLink",
+                json={
+                    "chat_id": CHANNEL_ID,
+                    "member_limit": 1,  # 👈 1 человек = одноразовая
+                    "expire_date": int(time.time()) + 600  # 👈 10 минут жизни ссылки
+                }
+            ).json()
+
+            link = invite.get("result", {}).get("invite_link")
+
+            if link:
+                requests.post(
+                    f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
+                    json={
+                        "chat_id": telegram_id,
+                        "text": f"✅ Оплата прошла!\n\nВот твой одноразовый доступ:\n{link}"
+                    }
+                )
+
+        except Exception as e:
+            print("INVITE ERROR:", e)
 
     return "ok"
 
