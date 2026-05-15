@@ -1,4 +1,5 @@
-```python
+print("🔥 NEW VERSION LOADED")
+
 from flask import Flask, request
 import requests
 import stripe
