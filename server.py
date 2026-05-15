@@ -166,20 +166,22 @@ def stripe_webhook():
 
         print("ACCESS GRANTED:", telegram_id)
 
-        # ================= ВАЖНО: ОДНОРАЗОВАЯ ССЫЛКА =================
+        # ================= ОДНОРАЗОВАЯ ССЫЛКА =================
         try:
-            invite = requests.post(
+            r = requests.post(
                 f"https://api.telegram.org/bot{BOT_TOKEN}/createChatInviteLink",
                 json={
                     "chat_id": CHANNEL_ID,
-                    "member_limit": 1,  # 👈 1 человек = одноразовая
-                    "expire_date": int(time.time()) + 600  # 👈 10 минут жизни ссылки
-                }
-            ).json()
+                    "member_limit": 1
+                },
+                timeout=10
+            )
 
-            link = invite.get("result", {}).get("invite_link")
+            data = r.json()
 
-            if link:
+            if data.get("ok"):
+                link = data["result"]["invite_link"]
+
                 requests.post(
                     f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
                     json={
@@ -187,6 +189,8 @@ def stripe_webhook():
                         "text": f"✅ Оплата прошла!\n\nВот твой одноразовый доступ:\n{link}"
                     }
                 )
+            else:
+                print("TELEGRAM ERROR:", data)
 
         except Exception as e:
             print("INVITE ERROR:", e)
