@@ -11,11 +11,11 @@ app = Flask(__name__)
 
 # ================= CONFIG =================
 
-BOT_TOKEN = "ТВОЙ_БОТ_ТОКЕН"
+BOT_TOKEN = "8685106379:AAET5pcVkmw9uuceDCMllFX_hwRgOguTsTI"
 CHANNEL_ID = -1003830259549
 
-STRIPE_SECRET = "ТВОЙ_STRIPE_SECRET"
-STRIPE_WEBHOOK_SECRET = "ТВОЙ_WEBHOOK_SECRET"
+STRIPE_SECRET = "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"
+STRIPE_WEBHOOK_SECRET = "whsec_PMuwx30H9kdvfYaeEz258fFBzlt89GIT"
 
 RENDER_URL = "https://bot-lp4u.onrender.com"
 
