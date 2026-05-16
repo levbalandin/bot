@@ -8,6 +8,8 @@ import time
 import sqlite3
 from datetime import datetime, timedelta
 
+from tribute import check_tribute_payment
+
 app = Flask(__name__)
 
 # ================= CONFIG =================
@@ -74,7 +76,7 @@ def telegram():
     if not update:
         return "ok"
 
-    # START
+    # ================= START =================
     if "message" in update:
         chat_id = update["message"]["chat"]["id"]
         text = update["message"].get("text", "")
@@ -85,18 +87,29 @@ def telegram():
                     [{"text": "1 месяц", "callback_data": "1m"}],
                     [{"text": "3 месяца", "callback_data": "3m"}],
                     [{"text": "6 месяцев", "callback_data": "6m"}],
-                    [{"text": "12 месяцев", "callback_data": "12m"}]
+                    [{"text": "12 месяцев", "callback_data": "12m"}],
+                    [{"text": "💳 Tribute", "callback_data": "tribute"}]
                 ]
             }
+
             send(chat_id, "Выбери тариф:", keyboard)
 
-    # CALLBACK
+    # ================= CALLBACK =================
     elif "callback_query" in update:
 
         cb = update["callback_query"]
         user_id = cb["from"]["id"]
         data = cb["data"]
 
+        # ================= TRIBUTE =================
+        if data == "tribute":
+            send(user_id,
+                "💳 Tribute оплата\n\n"
+                "После оплаты доступ активируется автоматически."
+            )
+            return "ok"
+
+        # ================= STRIPE =================
         if data not in PRICE_MAP:
             send(user_id, "Ошибка тарифа")
             return "ok"
@@ -126,7 +139,6 @@ def telegram():
         send(user_id, "Оплати подписку:", keyboard)
 
     return "ok"
-
 # ================= STRIPE =================
 
 @app.route("/stripe", methods=["POST"])
