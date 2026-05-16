@@ -18,7 +18,7 @@ CHANNEL_ID = -1003830259549
 STRIPE_SECRET = "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"
 STRIPE_WEBHOOK_SECRET = "whsec_PMuwx30H9kdvfYaeEz258fFBzlt89GIT"
 
-RENDER_URL = "https://bot-lp4u.onrender.com"
+RENDER_URL = "https://your-app.onrender.com"
 
 stripe.api_key = STRIPE_SECRET
 
@@ -31,7 +31,7 @@ PRICE_MAP = {
     "12m": ("price_1TX1XY5AySZk9F3jsjrr9BS6", 365)
 }
 
-# ================= DATABASE =================
+# ================= DB =================
 
 def init_db():
     conn = sqlite3.connect("subs.db")
@@ -45,11 +45,11 @@ def init_db():
     """)
 
     c.execute("""
-    CREATE TABLE IF NOT EXISTS tribute_payments (
+    CREATE TABLE IF NOT EXISTS payments (
         payment_id TEXT PRIMARY KEY,
         user_id INTEGER,
+        method TEXT,
         plan TEXT,
-        status TEXT,
         created_at INTEGER
     )
     """)
@@ -64,31 +64,69 @@ init_db()
 def send(chat_id, text, keyboard=None):
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
 
-    data = {
-        "chat_id": chat_id,
-        "text": text
-    }
-
+    payload = {"chat_id": chat_id, "text": text}
     if keyboard:
-        data["reply_markup"] = keyboard
+        payload["reply_markup"] = keyboard
 
-    try:
-        requests.post(url, json=data, timeout=10)
-    except:
-        pass
+    requests.post(url, json=payload, timeout=10)
+
+# ================= INVITE (ONE TIME) =================
+
+def create_invite():
+    r = requests.post(
+        f"https://api.telegram.org/bot{BOT_TOKEN}/createChatInviteLink",
+        json={
+            "chat_id": CHANNEL_ID,
+            "member_limit": 1
+        },
+        timeout=10
+    )
+    data = r.json()
+    if data.get("ok"):
+        return data["result"]["invite_link"]
+    return None
+
+# ================= ACCESS GRANT =================
+
+def grant_access(user_id, days, method, payment_id):
+    conn = sqlite3.connect("subs.db")
+    c = conn.cursor()
+
+    # anti-fraud: duplicate payment
+    c.execute("SELECT 1 FROM payments WHERE payment_id=?", (payment_id,))
+    if c.fetchone():
+        conn.close()
+        return
+
+    expire = datetime.utcnow() + timedelta(days=days)
+
+    c.execute("""
+        INSERT OR REPLACE INTO subs (user_id, expire)
+        VALUES (?, ?)
+    """, (user_id, expire.isoformat()))
+
+    c.execute("""
+        INSERT INTO payments (payment_id, user_id, method, plan, created_at)
+        VALUES (?, ?, ?, ?, ?)
+    """, (payment_id, user_id, method, str(days), int(time.time())))
+
+    conn.commit()
+    conn.close()
+
+    link = create_invite()
+
+    if link:
+        send(user_id, f"✅ Оплата подтверждена ({method})\n\n🎟 {link}")
 
 # ================= WEBHOOK =================
 
 @app.route("/telegram", methods=["POST"])
 def telegram():
-
     update = request.get_json()
     if not update:
         return "ok"
 
-    # ================= START =================
     if "message" in update:
-
         chat_id = update["message"]["chat"]["id"]
         text = update["message"].get("text", "")
 
@@ -102,43 +140,34 @@ def telegram():
                     [{"text": "💳 Tribute", "callback_data": "tribute"}]
                 ]
             }
-
             send(chat_id, "Выбери тариф:", keyboard)
 
         return "ok"
 
-    # ================= CALLBACK =================
     if "callback_query" in update:
-
         cb = update["callback_query"]
         user_id = cb["from"]["id"]
         data = cb["data"]
 
         # ================= TRIBUTE =================
         if data == "tribute":
-
             keyboard = {
-                "inline_keyboard": [
-                    [{"text": "💳 Оплатить через Tribute",
-                      "url": f"https://t.me/tribute/app?startapp=sViL"}]
-                ]
+                "inline_keyboard": [[
+                    {"text": "Открыть оплату",
+                     "url": "https://t.me/tribute/app?startapp=sViL"}
+                ]]
             }
-
             send(user_id, "Оплата Tribute:", keyboard)
             return "ok"
 
         # ================= STRIPE =================
         if data in PRICE_MAP:
-
             price_id, days = PRICE_MAP[data]
 
             session = stripe.checkout.Session.create(
                 mode="subscription",
                 payment_method_types=["card"],
-                line_items=[{
-                    "price": price_id,
-                    "quantity": 1
-                }],
+                line_items=[{"price": price_id, "quantity": 1}],
                 success_url="https://t.me/",
                 metadata={
                     "telegram_id": str(user_id),
@@ -149,9 +178,8 @@ def telegram():
 
             keyboard = {
                 "inline_keyboard": [[
-                    {"text": "💳 STRIPE", "url": session.url},
-                    {"text": "⚡ TRIBUTE",
-                     "url": f"https://t.me/tribute/app?startapp=sViL"}
+                    {"text": "Stripe", "url": session.url},
+                    {"text": "Tribute", "url": "https://t.me/tribute/app?startapp=sViL"}
                 ]]
             }
 
@@ -164,105 +192,91 @@ def telegram():
 
 @app.route("/stripe", methods=["POST"])
 def stripe_webhook():
-
     payload = request.data
     sig = request.headers.get("Stripe-Signature")
 
     try:
         event = stripe.Webhook.construct_event(
-            payload,
-            sig,
-            STRIPE_WEBHOOK_SECRET
+            payload, sig, STRIPE_WEBHOOK_SECRET
         )
     except:
-        return "bad signature", 400
+        return "bad", 400
 
     if event["type"] != "checkout.session.completed":
         return "ok"
 
-    session = event["data"]["object"]
+    s = event["data"]["object"]
 
     try:
-        telegram_id = int(session["metadata"]["telegram_id"])
-        days = int(session["metadata"]["days"])
+        user_id = int(s["metadata"]["telegram_id"])
+        days = int(s["metadata"]["days"])
+        payment_id = s["id"]
 
-        expire = datetime.utcnow() + timedelta(days=days)
-
-        conn = sqlite3.connect("subs.db")
-        c = conn.cursor()
-
-        c.execute("""
-            INSERT OR REPLACE INTO subs (user_id, expire)
-            VALUES (?, ?)
-        """, (telegram_id, expire.isoformat()))
-
-        conn.commit()
-        conn.close()
-
-        # invite link
-        r = requests.post(
-            f"https://api.telegram.org/bot{BOT_TOKEN}/createChatInviteLink",
-            json={
-                "chat_id": CHANNEL_ID,
-                "member_limit": 1
-            },
-            timeout=10
-        )
-
-        res = r.json()
-
-        if res.get("ok"):
-            link = res["result"]["invite_link"]
-
-            requests.post(
-                f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
-                json={
-                    "chat_id": telegram_id,
-                    "text": f"✅ Stripe оплата прошла!\n\n{link}"
-                }
-            )
+        grant_access(user_id, days, "stripe", payment_id)
 
     except Exception as e:
         print("STRIPE ERROR:", e)
 
     return "ok"
 
-# ================= CHECKER =================
+# ================= TRIBUTE WEBHOOK =================
+
+@app.route("/tribute/webhook", methods=["POST"])
+def tribute_webhook():
+    data = request.get_json()
+    if not data:
+        return "ok"
+
+    try:
+        if data.get("status") != "success":
+            return "ok"
+
+        user_id = int(data["user_id"])
+        plan = data["plan"]
+        payment_id = data["payment_id"]
+
+        if plan not in PRICE_MAP:
+            return "ok"
+
+        days = PRICE_MAP[plan][1]
+
+        grant_access(user_id, days, "tribute", payment_id)
+
+    except Exception as e:
+        print("TRIBUTE ERROR:", e)
+
+    return "ok"
+
+# ================= AUTO KICK =================
 
 def checker():
     while True:
         try:
             conn = sqlite3.connect("subs.db")
             c = conn.cursor()
-
             c.execute("SELECT user_id, expire FROM subs")
             rows = c.fetchall()
 
             now = datetime.utcnow()
 
-            for user_id, expire in rows:
-                try:
-                    if now > datetime.fromisoformat(expire):
+            for user_id, exp in rows:
+                if now > datetime.fromisoformat(exp):
 
-                        requests.post(
-                            f"https://api.telegram.org/bot{BOT_TOKEN}/banChatMember",
-                            json={
-                                "chat_id": CHANNEL_ID,
-                                "user_id": user_id
-                            },
-                            timeout=10
-                        )
+                    requests.post(
+                        f"https://api.telegram.org/bot{BOT_TOKEN}/banChatMember",
+                        json={
+                            "chat_id": CHANNEL_ID,
+                            "user_id": user_id
+                        }
+                    )
 
-                        c.execute("DELETE FROM subs WHERE user_id=?", (user_id,))
-                        conn.commit()
-
-                except Exception as e:
-                    print("CHECK ERROR:", e)
+                    c.execute("DELETE FROM subs WHERE user_id=?", (user_id,))
+                    conn.commit()
 
             conn.close()
 
         except Exception as e:
-            print("CHECKER ERROR:", e)
+            print("CHECK ERROR:", e)
 
         time.sleep(60)
 
