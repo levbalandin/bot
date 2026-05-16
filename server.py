@@ -27,10 +27,10 @@ stripe.api_key = STRIPE_SECRET
 # ================= PLANS =================
 
 PRICE_MAP = {
-    "1m": ("price_xxx", 30),
-    "3m": ("price_xxx", 90),
-    "6m": ("price_xxx", 180),
-    "12m": ("price_xxx", 365)
+        "1m": ("price_1TX1WI5AySZk9F3jAfOTEg6B", 30),
+    "3m": ("price_1TX1X05AySZk9F3jwnCsSXrW", 90),
+    "6m": ("price_1TX1XJ5AySZk9F3j0kSslAcp", 180),
+    "12m": ("price_1TX1XY5AySZk9F3jsjrr9BS6", 365)
 }
 
 # ================= DB =================
