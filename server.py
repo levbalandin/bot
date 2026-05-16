@@ -154,7 +154,6 @@ def stripe_webhook():
 
         expire = datetime.utcnow() + timedelta(days=days)
 
-        # сохраняем подписку в базу
         conn = sqlite3.connect("subs.db")
         c = conn.cursor()
         c.execute("""
@@ -167,7 +166,6 @@ def stripe_webhook():
 
         print("ACCESS GRANTED:", telegram_id)
 
-        # ================= ОДНОРАЗОВАЯ ССЫЛКА =================
         try:
             r = requests.post(
                 f"https://api.telegram.org/bot{BOT_TOKEN}/createChatInviteLink",
@@ -218,7 +216,6 @@ def checker():
                 if now > exp:
                     print("REMOVING:", user_id)
 
-                    # IMPORTANT FIX: correct Telegram param is user_id
                     requests.post(
                         f"https://api.telegram.org/bot{BOT_TOKEN}/banChatMember",
                         json={
@@ -247,7 +244,7 @@ def checker():
 
         time.sleep(60)
 
-# ================= RUN =================
+# ================= ROUTES =================
 
 @app.route("/")
 def home():
@@ -265,6 +262,8 @@ def set_webhook():
     )
     return r.text
 
-if name == "__main__":
+# ================= RUN =================
+
+if __name__ == "__main__":
     threading.Thread(target=checker, daemon=True).start()
     app.run(host="0.0.0.0", port=10000)
