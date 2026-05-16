@@ -1,3 +1,4 @@
+
 print("🔥 NEW VERSION LOADED")
 
 from flask import Flask, request
@@ -7,8 +8,6 @@ import threading
 import time
 import sqlite3
 from datetime import datetime, timedelta
-
-from tribute import check_tribute_payment
 
 app = Flask(__name__)
 
@@ -76,8 +75,9 @@ def telegram():
     if not update:
         return "ok"
 
-    # START
+    # ================= START =================
     if "message" in update:
+
         chat_id = update["message"]["chat"]["id"]
         text = update["message"].get("text", "")
 
@@ -96,14 +96,14 @@ def telegram():
 
         return "ok"
 
-    # CALLBACK
+    # ================= CALLBACK =================
     if "callback_query" in update:
 
         cb = update["callback_query"]
         user_id = cb["from"]["id"]
         data = cb["data"]
 
-        # TRIBUTE
+        # ================= TRIBUTE =================
         if data == "tribute":
             send(user_id,
                 "💳 Tribute оплата\n\n"
@@ -111,7 +111,7 @@ def telegram():
             )
             return "ok"
 
-        # STRIPE
+        # ================= STRIPE =================
         if data not in PRICE_MAP:
             send(user_id, "Ошибка тарифа")
             return "ok"
@@ -141,6 +141,9 @@ def telegram():
         send(user_id, "Оплати подписку:", keyboard)
 
         return "ok"
+
+    # ================= SAFETY FALLBACK =================
+    return "ok"
 # ================= STRIPE =================
 
 @app.route("/stripe", methods=["POST"])
