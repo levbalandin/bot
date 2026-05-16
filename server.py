@@ -162,16 +162,22 @@ def stripe_webhook():
     payload = request.data
     sig = request.headers.get("Stripe-Signature")
 
-    event = stripe.Webhook.construct_event(
-        payload,
-        sig,
-        STRIPE_WEBHOOK_SECRET
-    )
+    try:
+        event = stripe.Webhook.construct_event(
+            payload,
+            sig,
+            STRIPE_WEBHOOK_SECRET
+        )
+    except Exception as e:
+        print("STRIPE WEBHOOK ERROR:", e)
+        return "bad signature", 400
 
-    if event["type"] == "checkout.session.completed":
+    if event["type"] != "checkout.session.completed":
+        return "ok"
 
-        session = event["data"]["object"]
+    session = event["data"]["object"]
 
+    try:
         telegram_id = int(session["metadata"]["telegram_id"])
         days = int(session["metadata"]["days"])
 
@@ -181,26 +187,26 @@ def stripe_webhook():
         c = conn.cursor()
 
         c.execute("""
-        INSERT OR REPLACE INTO subs (user_id, expire)
-        VALUES (?, ?)
+            INSERT OR REPLACE INTO subs (user_id, expire)
+            VALUES (?, ?)
         """, (telegram_id, expire.isoformat()))
 
         conn.commit()
         conn.close()
 
-        # invite link
         r = requests.post(
             f"https://api.telegram.org/bot{BOT_TOKEN}/createChatInviteLink",
             json={
                 "chat_id": CHANNEL_ID,
                 "member_limit": 1
-            }
+            },
+            timeout=10
         )
 
-        data = r.json()
+        res = r.json()
 
-        if data.get("ok"):
-            link = data["result"]["invite_link"]
+        if res.get("ok"):
+            link = res["result"]["invite_link"]
 
             requests.post(
                 f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
@@ -210,69 +216,91 @@ def stripe_webhook():
                 }
             )
 
+    except Exception as e:
+        print("STRIPE PROCESS ERROR:", e)
+
     return "ok"
 
 # ================= TRIBUTE WEBHOOK =================
 
 @app.route("/tribute/webhook", methods=["POST"])
 def tribute_webhook():
+    try:
+        data = request.get_json()
+        if not data:
+            return "ok"
 
-    data = request.get_json()
+        user_id = int(data.get("user_id", 0))
+        plan = data.get("plan")
+        status = data.get("status")
+        payment_id = data.get("payment_id")
 
-    user_id = int(data["user_id"])
-    plan = data["plan"]
-    status = data["status"]
-    payment_id = data["payment_id"]
+        if not user_id or not plan or not payment_id:
+            return "bad request"
 
-    if status != "success":
-        return "ok"
+        if status != "success":
+            return "ok"
 
-    conn = sqlite3.connect("subs.db")
-    c = conn.cursor()
+        # ================= ANTI FRAUD =================
+        conn = sqlite3.connect("subs.db")
+        c = conn.cursor()
 
-    # anti-fraud
-    c.execute("SELECT payment_id FROM tribute_payments WHERE payment_id=?", (payment_id,))
-    if c.fetchone():
-        return "ok"
+        c.execute("SELECT payment_id FROM tribute_payments WHERE payment_id=?", (payment_id,))
+        if c.fetchone():
+            conn.close()
+            return "duplicate"
 
-    days = PRICE_MAP[plan][1]
-    expire = datetime.utcnow() + timedelta(days=days)
+        if plan not in PRICE_MAP:
+            conn.close()
+            return "invalid plan"
 
-    c.execute("""
-    INSERT OR REPLACE INTO subs (user_id, expire)
-    VALUES (?, ?)
-    """, (user_id, expire.isoformat()))
+        days = PRICE_MAP[plan][1]
 
-    c.execute("""
-    INSERT INTO tribute_payments (payment_id, user_id, plan, status, created_at)
-    VALUES (?, ?, ?, ?, ?)
-    """, (payment_id, user_id, plan, "paid", int(time.time())))
+        expire = datetime.utcnow() + timedelta(days=days)
 
-    conn.commit()
-    conn.close()
+        # save subscription
+        c.execute("""
+            INSERT OR REPLACE INTO subs (user_id, expire)
+            VALUES (?, ?)
+        """, (user_id, expire.isoformat()))
 
-    r = requests.post(
-        f"https://api.telegram.org/bot{BOT_TOKEN}/createChatInviteLink",
-        json={
-            "chat_id": CHANNEL_ID,
-            "member_limit": 1
-        }
-    )
+        # save payment log
+        c.execute("""
+            INSERT INTO tribute_payments (payment_id, user_id, plan, status, created_at)
+            VALUES (?, ?, ?, ?, ?)
+        """, (payment_id, user_id, plan, "paid", int(time.time())))
 
-    data = r.json()
+        conn.commit()
+        conn.close()
 
-    if data.get("ok"):
-        link = data["result"]["invite_link"]
-
-        requests.post(
-            f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
+        # ================= INVITE LINK =================
+        r = requests.post(
+            f"https://api.telegram.org/bot{BOT_TOKEN}/createChatInviteLink",
             json={
-                "chat_id": user_id,
-                "text": f"⚡ Tribute оплата прошла!\n\n{link}"
-            }
+                "chat_id": CHANNEL_ID,
+                "member_limit": 1
+            },
+            timeout=10
         )
 
-    return "ok"
+        res = r.json()
+
+        if res.get("ok"):
+            link = res["result"]["invite_link"]
+
+            requests.post(
+                f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
+                json={
+                    "chat_id": user_id,
+                    "text": f"⚡ Tribute оплата прошла!\n\nВот доступ:\n{link}"
+                }
+            )
+
+        return "ok"
+
+    except Exception as e:
+        print("TRIBUTE ERROR:", e)
+        return "error"
 
 # ================= CHECKER =================
 
@@ -288,24 +316,28 @@ def checker():
             now = datetime.utcnow()
 
             for user_id, expire in rows:
-                if now > datetime.fromisoformat(expire):
+                try:
+                    if now > datetime.fromisoformat(expire):
 
-                    requests.post(
-                        f"https://api.telegram.org/bot{BOT_TOKEN}/banChatMember",
-                        json={
-                            "chat_id": CHANNEL_ID,
-                            "user_id": user_id
-                        }
-                    )
+                        requests.post(
+                            f"https://api.telegram.org/bot{BOT_TOKEN}/banChatMember",
+                            json={
+                                "chat_id": CHANNEL_ID,
+                                "user_id": user_id
+                            },
+                            timeout=10
+                        )
 
-                    conn2 = sqlite3.connect("subs.db")
-                    c2 = conn2.cursor()
-                    c2.execute("DELETE FROM subs WHERE user_id=?", (user_id,))
-                    conn2.commit()
-                    conn2.close()
+                        c.execute("DELETE FROM subs WHERE user_id=?", (user_id,))
+                        conn.commit()
+
+                except Exception as inner:
+                    print("CHECKER USER ERROR:", inner)
+
+            conn.close()
 
         except Exception as e:
-            print(e)
+            print("CHECKER ERROR:", e)
 
         time.sleep(60)
 
