@@ -201,27 +201,13 @@ def stripe_webhook():
 
 @app.route("/tribute/webhook", methods=["POST"])
 def tribute_webhook():
-    data = request.get_json()
-    if not data:
-        return "ok"
+    print("🔥 WEBHOOK ПРИШЁЛ")
 
-    # ❗ базовая защита
-    if data.get("status") != "success":
-        return "ok"
-
-    user_id = int(data["user_id"])
-    plan = data["plan"]
-    payment_id = data["payment_id"]
-
-    if plan not in PRICE_MAP:
-        return "ok"
-
-    days = PRICE_MAP[plan][1]
-
-    grant_access(user_id, days, "tribute", payment_id)
+    print("HEADERS:", dict(request.headers))
+    print("RAW:", request.data)
+    print("JSON:", request.get_json())
 
     return "ok"
-
 # ================= AUTO KICK =================
 
 def checker():
