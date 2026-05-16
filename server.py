@@ -173,26 +173,17 @@ def telegram():
 
 # ================= STRIPE WEBHOOK =================
 
-@app.route("/stripe", methods=["POST"])
-def stripe_webhook():
-    payload = request.data
-    sig = request.headers.get("Stripe-Signature")
+@app.route("/tribute/webhook", methods=["POST"])
+def tribute_webhook():
+    print("\n🔥 WEBHOOK ПРИШЁЛ")
+
+    print("HEADERS:", dict(request.headers))
+    print("RAW DATA:", request.data)
 
     try:
-        event = stripe.Webhook.construct_event(payload, sig, STRIPE_WEBHOOK_SECRET)
+        print("JSON:", request.get_json())
     except:
-        return "bad", 400
-
-    if event["type"] != "checkout.session.completed":
-        return "ok"
-
-    s = event["data"]["object"]
-
-    user_id = int(s["metadata"]["telegram_id"])
-    days = int(s["metadata"]["days"])
-    payment_id = s["id"]
-
-    grant_access(user_id, days, "stripe", payment_id)
+        print("JSON: NONE")
 
     return "ok"
 
