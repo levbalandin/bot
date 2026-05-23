@@ -8,7 +8,7 @@ app = Flask(__name__)
 
 BOT_TOKEN = "8685106379:AAET5pcVkmw9uuceDCMllFX_hwRgOguTsTI"
 
-TRIBUTE_URL = "https://t.me/tribute/app?startapp=sViL"
+TRIBUTE_URL = "https://t.me/tribute/app?startapp=sW3T"
 
 # ================= SEND =================
 
