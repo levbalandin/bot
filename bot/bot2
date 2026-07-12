@@ -80,7 +80,7 @@ def set_webhook():
     requests.post(
         f"https://api.telegram.org/bot{BOT_TOKEN}/setWebhook",
         json={
-            "url": "https://bot-lp4u.onrender.com/telegram"
+            "url": "https://newbot-ibp4.onrender.com/telegram"
         }
     )
 
